@@ -259,6 +259,24 @@ de qualquer combinação dessas entidades, não apenas de uma por vez.
 
 ---
 
+## Atualização — Grafo travando na estabilização (barra de carregamento)
+
+Usuário reportou carregamento muito demorado com a barra de estabilização
+do vis.js parada em ~60%. Causa: o padrão do vis.js roda até 1000 iterações
+de física por grafo, e um emitente de alto volume (30.512 notas) gerava um
+recorte de 316 nós / 1.684 arestas — pesado demais para estabilizar em
+tempo razoável no navegador.
+
+Correções aplicadas:
+
+- `construir_grafo_selecao`: `max_notas` reduzido de 4000 para 1200 (mesmo
+  emitente de teste agora gera 170 nós / 623 arestas).
+- `renderizar_grafo`: iterações de estabilização do vis.js limitadas
+  explicitamente a 120 via `net.set_options(...)`, em vez de depender do
+  padrão da biblioteca.
+
+---
+
 ## Controle de Versão
 
 - Repositório Git inicializado nesta sessão (`git init`, branch `main`).

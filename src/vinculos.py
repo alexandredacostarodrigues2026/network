@@ -67,7 +67,7 @@ def construir_grafo_selecao(
     emit_ids: list[str] | None = None,
     dest_ids: list[str] | None = None,
     produto_ids: list[str] | None = None,
-    max_notas: int = 4000,
+    max_notas: int = 1200,
 ) -> tuple[nx.Graph, int, int]:
     """Constrói o grafo tripartido restrito às notas que envolvem a seleção.
 

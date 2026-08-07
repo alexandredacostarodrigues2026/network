@@ -51,7 +51,17 @@ def processar_csvs(caminhos: tuple[str, ...]) -> pd.DataFrame:
 
 def renderizar_grafo(grafo) -> str:
     net = Network(height="720px", width="100%", bgcolor="#111111", font_color="white")
-    net.barnes_hut(gravity=-4000, spring_length=150)
+    # Iterações de estabilização limitadas: com o padrão do vis.js (até 1000
+    # iterações) grafos de algumas centenas de nós/milhares de arestas
+    # deixavam a barra de carregamento travada por muito tempo no navegador.
+    net.set_options("""
+    {
+      "physics": {
+        "barnesHut": {"gravitationalConstant": -4000, "springLength": 150},
+        "stabilization": {"enabled": true, "iterations": 120, "fit": true}
+      }
+    }
+    """)
     for no, dados in grafo.nodes(data=True):
         selecionado = dados.get("selecionado", False)
         net.add_node(
