@@ -231,7 +231,15 @@ garantindo que as colunas de documento sejam tratadas como texto.
 - Avaliar necessidade de paginação/filtro por período (data de emissão) na
   interface, já que a base tende a crescer a cada nova carga.
 - Definir política de retenção/backup do Parquet em `data_processed/`.
-- Confirmar com o usuário a visibilidade do repositório GitHub
-  (`alexandredacostarodrigues2026/network`) antes do push, dado que os
-  CSVs de origem e os textos com endereços internos foram propositalmente
-  excluídos via `.gitignore`.
+
+---
+
+## Controle de Versão
+
+- Repositório Git inicializado nesta sessão (`git init`, branch `main`).
+- Remoto configurado: `https://github.com/alexandredacostarodrigues2026/network.git`
+  (repositório privado, conforme confirmado pelo usuário — CSVs de origem,
+  Parquet e arquivos com endereços internos de rede ficam fora do commit
+  via `.gitignore`).
+- Commit inicial `feat: initial project structure and data extraction from network share`
+  enviado com `git push -u origin main`.
