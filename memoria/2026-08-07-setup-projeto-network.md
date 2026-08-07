@@ -277,6 +277,15 @@ Correções aplicadas:
 
 ---
 
+## Atualização — Limpeza de artefato gerado pelo pyvis
+
+O `pyvis` grava uma pasta `lib/` (vis-network, tom-select) no diretório de
+trabalho atual toda vez que o grafo é renderizado, como efeito colateral de
+`Network.write_html`. Adicionada ao `.gitignore` para não poluir o
+repositório — é um artefato de renderização, não código-fonte.
+
+---
+
 ## Controle de Versão
 
 - Repositório Git inicializado nesta sessão (`git init`, branch `main`).
