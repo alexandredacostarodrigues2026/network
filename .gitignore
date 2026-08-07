@@ -1,0 +1,18 @@
+# Dados de origem e derivados: grandes e sensíveis, não versionar
+*.csv
+data_processed/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Ferramentas locais / arquivos soltos anteriores ao projeto NETWORK
+.claude/
+apoio.txt
+ENDEREÇOS  MULTIUSUÁRIOS.txt
+prompt geral para atualização.txt
+prompt para IA gerar md de intruções3.txt
