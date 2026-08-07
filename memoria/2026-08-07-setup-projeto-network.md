@@ -234,6 +234,31 @@ garantindo que as colunas de documento sejam tratadas como texto.
 
 ---
 
+## Atualização — Seleção múltipla de Emitentes/Destinatários/Produtos
+
+A busca por um único termo de texto (ego-network) foi substituída por três
+seletores múltiplos (`st.multiselect`) na interface — um para emitentes, um
+para destinatários e um para produtos — permitindo montar o grafo a partir
+de qualquer combinação dessas entidades, não apenas de uma por vez.
+
+- `vinculos.py`: `buscar_entidades` e `construir_grafo_entidade` foram
+  substituídos por `listar_emitentes`, `listar_destinatarios`,
+  `listar_produtos` (para popular os seletores) e `construir_grafo_selecao`
+  (filtra as notas que envolvem QUALQUER um dos IDs selecionados — união,
+  não interseção — e monta o grafo tripartido só com esse recorte).
+- Continua havendo um teto de segurança (`max_notas=4000`, priorizando as
+  notas de maior valor) para evitar que uma seleção muito ampla (ex.: um
+  emitente com 30 mil notas) trave a renderização no navegador. A interface
+  avisa quando o recorte foi truncado.
+- Nós que fazem parte da seleção do usuário (em vez de terem apenas
+  aparecido como contraparte) ganham destaque visual (borda mais grossa,
+  nó maior) no grafo.
+- Validado com um emitente de alto volume (30.512 notas encontradas,
+  truncado para 4.000 → grafo de 316 nós / 1.684 arestas) e com seleção
+  combinada de emitente + destinatário + produto simultaneamente.
+
+---
+
 ## Controle de Versão
 
 - Repositório Git inicializado nesta sessão (`git init`, branch `main`).

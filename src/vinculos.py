@@ -2,9 +2,10 @@
 
 Constrói um grafo tripartido (emitente / produto / destinatário) a partir do
 DataFrame normalizado produzido por `ingest.py`. A visualização (estilo i2)
-não tenta renderizar a base inteira de uma vez — o usuário busca uma
-entidade (CNPJ, CPF ou nome) e o grafo é construído em torno dela (ego-network),
-o que mantém a renderização navegável mesmo com ~640 mil linhas de origem.
+não tenta renderizar a base inteira de uma vez — o usuário seleciona quais
+emitentes, destinatários e/ou produtos quer investigar, e o grafo é
+construído apenas com as notas que envolvem essa seleção, o que mantém a
+renderização navegável mesmo com ~640 mil linhas de origem.
 """
 
 from __future__ import annotations
@@ -41,110 +42,102 @@ def preparar_ids(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def buscar_entidades(df: pd.DataFrame, termo: str, limite: int = 20) -> pd.DataFrame:
-    """Procura emitentes/destinatários por nome ou documento (busca parcial)."""
-    termo_norm = termo.strip().lower()
-    if not termo_norm:
-        return pd.DataFrame(columns=["id", "nome", "tipo", "municipio", "uf"])
+def listar_emitentes(df: pd.DataFrame) -> pd.DataFrame:
+    """Lista emitentes distintos (id + nome), ordenados por nome."""
+    e = df[["emit_id", "emit_nome"]].drop_duplicates("emit_id").rename(columns={"emit_id": "id", "emit_nome": "nome"})
+    return e.sort_values("nome", na_position="last")
 
-    emit = df[["emit_id", "emit_nome", "emit_municipio", "emit_uf"]].drop_duplicates("emit_id")
-    emit.columns = ["id", "nome", "municipio", "uf"]
-    emit["tipo"] = "emitente"
 
-    dest = df[["dest_id", "dest_nome", "dest_municipio", "dest_uf"]].drop_duplicates("dest_id")
-    dest.columns = ["id", "nome", "municipio", "uf"]
-    dest["tipo"] = "destinatario"
+def listar_destinatarios(df: pd.DataFrame) -> pd.DataFrame:
+    """Lista destinatários distintos (id + nome), ordenados por nome."""
+    d = df[["dest_id", "dest_nome"]].drop_duplicates("dest_id").rename(columns={"dest_id": "id", "dest_nome": "nome"})
+    return d.sort_values("nome", na_position="last")
 
-    todas = pd.concat([emit, dest], ignore_index=True)
-    filtro = (
-        todas["id"].str.lower().str.contains(termo_norm, na=False)
-        | todas["nome"].str.lower().str.contains(termo_norm, na=False)
+
+def listar_produtos(df: pd.DataFrame) -> pd.DataFrame:
+    """Lista produtos distintos (id + nome), ordenados por nome."""
+    p = df[["produto_id", "produto_nome"]].drop_duplicates("produto_id").rename(
+        columns={"produto_id": "id", "produto_nome": "nome"}
     )
-    return todas[filtro].head(limite)
+    return p.sort_values("nome", na_position="last")
 
 
-def construir_grafo_entidade(
-    df: pd.DataFrame, entidade_id: str, max_produtos: int = 15, max_contrapartes_por_produto: int = 8
-) -> nx.Graph:
-    """Constrói o ego-network de uma entidade: entidade -> produtos -> contrapartes.
+def construir_grafo_selecao(
+    df: pd.DataFrame,
+    emit_ids: list[str] | None = None,
+    dest_ids: list[str] | None = None,
+    produto_ids: list[str] | None = None,
+    max_notas: int = 4000,
+) -> tuple[nx.Graph, int, int]:
+    """Constrói o grafo tripartido restrito às notas que envolvem a seleção.
 
-    `entidade_id` pode ser um emit_id ou um dest_id. Os produtos mais
-    relevantes (por valor total transacionado) são priorizados, e para cada
-    produto apenas as contrapartes mais relevantes são incluídas, mantendo o
-    grafo em um tamanho navegável no navegador.
+    Uma nota entra no recorte se envolver QUALQUER um dos emitentes,
+    destinatários ou produtos selecionados (OR entre os filtros). Quando o
+    recorte resultante é maior que `max_notas`, mantém apenas as notas de
+    maior valor para preservar a navegabilidade do grafo no navegador.
+
+    Retorna `(grafo, total_notas_encontradas, total_notas_exibidas)`.
     """
+    emit_ids = set(emit_ids or [])
+    dest_ids = set(dest_ids or [])
+    produto_ids = set(produto_ids or [])
+    selecionados = emit_ids | dest_ids | produto_ids
+
+    if not selecionados:
+        return nx.Graph(), 0, 0
+
+    mask = pd.Series(False, index=df.index)
+    if emit_ids:
+        mask |= df["emit_id"].isin(emit_ids)
+    if dest_ids:
+        mask |= df["dest_id"].isin(dest_ids)
+    if produto_ids:
+        mask |= df["produto_id"].isin(produto_ids)
+
+    sub = df[mask]
+    total_encontradas = sub["chave_nfe"].nunique()
+
+    if total_encontradas > max_notas:
+        chaves_top = sub.drop_duplicates("chave_nfe").nlargest(max_notas, "valor_nota")["chave_nfe"]
+        sub = sub[sub["chave_nfe"].isin(chaves_top)]
+    total_exibidas = sub["chave_nfe"].nunique()
+
     g = nx.Graph()
 
-    linhas_emit = df[df["emit_id"] == entidade_id]
-    linhas_dest = df[df["dest_id"] == entidade_id]
-
-    if linhas_emit.empty and linhas_dest.empty:
-        return g
-
-    nome_entidade = (
-        linhas_emit["emit_nome"].iloc[0] if not linhas_emit.empty else linhas_dest["dest_nome"].iloc[0]
-    )
-    g.add_node(entidade_id, label=nome_entidade, tipo="foco", titulo=f"{nome_entidade}\n{entidade_id}")
-
-    def _processar(linhas: pd.DataFrame, papel: str):
-        if linhas.empty:
+    def _add_no(id_, nome, tipo):
+        if g.has_node(id_):
             return
-        contraparte_id_col = "dest_id" if papel == "emitente" else "emit_id"
-        contraparte_nome_col = "dest_nome" if papel == "emitente" else "emit_nome"
-
-        por_produto = (
-            linhas.groupby("produto_id")
-            .agg(produto_nome=("produto_nome", "first"), valor_total=("produto_valor", "sum"), qtd_notas=("chave_nfe", "nunique"))
-            .sort_values("valor_total", ascending=False)
-            .head(max_produtos)
+        g.add_node(
+            id_,
+            label=nome or id_,
+            tipo=tipo,
+            selecionado=id_ in selecionados,
+            titulo=f"{nome}\n{id_}" if nome else str(id_),
         )
 
-        for produto_id, prod_row in por_produto.iterrows():
-            g.add_node(
-                produto_id,
-                label=prod_row["produto_nome"] or produto_id,
-                tipo="produto",
-                titulo=f"{prod_row['produto_nome']}\nValor total: R$ {prod_row['valor_total']:,.2f}",
-            )
-            g.add_edge(
-                entidade_id,
-                produto_id,
-                peso=prod_row["qtd_notas"],
-                titulo=f"{prod_row['qtd_notas']} nota(s)",
-            )
+    emit_prod = sub.groupby(["emit_id", "produto_id"]).agg(
+        emit_nome=("emit_nome", "first"),
+        produto_nome=("produto_nome", "first"),
+        qtd_notas=("chave_nfe", "nunique"),
+        valor=("produto_valor", "sum"),
+    )
+    for (emit_id, produto_id), r in emit_prod.iterrows():
+        _add_no(emit_id, r["emit_nome"], "emitente")
+        _add_no(produto_id, r["produto_nome"], "produto")
+        g.add_edge(emit_id, produto_id, peso=r["qtd_notas"], titulo=f"{r['qtd_notas']} nota(s) - R$ {r['valor']:,.2f}")
 
-            linhas_produto = linhas[linhas["produto_id"] == produto_id]
-            contrapartes = (
-                linhas_produto.groupby(contraparte_id_col)
-                .agg(nome=(contraparte_nome_col, "first"), valor_total=("produto_valor", "sum"), qtd_notas=("chave_nfe", "nunique"))
-                .sort_values("valor_total", ascending=False)
-                .head(max_contrapartes_por_produto)
-            )
-            for contraparte_id, cp_row in contrapartes.iterrows():
-                if contraparte_id == entidade_id:
-                    # Mesma entidade pesquisada aparecendo do outro lado do
-                    # vínculo (ex.: também é destinatária de si mesma em
-                    # outra nota) — mantém o nó "foco" em vez de sobrescrever.
-                    g.add_edge(produto_id, contraparte_id, peso=cp_row["qtd_notas"], titulo="")
-                    continue
-                tipo_contraparte = "destinatario" if papel == "emitente" else "emitente"
-                g.add_node(
-                    contraparte_id,
-                    label=cp_row["nome"] or contraparte_id,
-                    tipo=tipo_contraparte,
-                    titulo=f"{cp_row['nome']}\n{contraparte_id}\nValor total: R$ {cp_row['valor_total']:,.2f}",
-                )
-                g.add_edge(
-                    produto_id,
-                    contraparte_id,
-                    peso=cp_row["qtd_notas"],
-                    titulo=f"{cp_row['qtd_notas']} nota(s) - R$ {cp_row['valor_total']:,.2f}",
-                )
+    prod_dest = sub.groupby(["produto_id", "dest_id"]).agg(
+        produto_nome=("produto_nome", "first"),
+        dest_nome=("dest_nome", "first"),
+        qtd_notas=("chave_nfe", "nunique"),
+        valor=("produto_valor", "sum"),
+    )
+    for (produto_id, dest_id), r in prod_dest.iterrows():
+        _add_no(produto_id, r["produto_nome"], "produto")
+        _add_no(dest_id, r["dest_nome"], "destinatario")
+        g.add_edge(produto_id, dest_id, peso=r["qtd_notas"], titulo=f"{r['qtd_notas']} nota(s) - R$ {r['valor']:,.2f}")
 
-    _processar(linhas_emit, "emitente")
-    _processar(linhas_dest, "destinatario")
-
-    return g
+    return g, total_encontradas, total_exibidas
 
 
 def estatisticas_gerais(df: pd.DataFrame) -> dict:

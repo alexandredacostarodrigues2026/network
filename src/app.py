@@ -21,12 +21,19 @@ from pyvis.network import Network
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ingest import carregar_notas, descobrir_csvs
-from vinculos import buscar_entidades, construir_grafo_entidade, estatisticas_gerais, preparar_ids
+from vinculos import (
+    construir_grafo_selecao,
+    estatisticas_gerais,
+    listar_destinatarios,
+    listar_emitentes,
+    listar_produtos,
+    preparar_ids,
+)
 
 RAIZ = Path(__file__).resolve().parent.parent
 PARQUET = RAIZ / "data_processed" / "notas_normalizadas.parquet"
 
-CORES = {"foco": "#e74c3c", "emitente": "#3498db", "destinatario": "#2ecc71", "produto": "#f39c12"}
+CORES = {"emitente": "#3498db", "destinatario": "#2ecc71", "produto": "#f39c12"}
 
 st.set_page_config(page_title="NETWORK — Análise de Vínculos", layout="wide")
 
@@ -46,13 +53,17 @@ def renderizar_grafo(grafo) -> str:
     net = Network(height="720px", width="100%", bgcolor="#111111", font_color="white")
     net.barnes_hut(gravity=-4000, spring_length=150)
     for no, dados in grafo.nodes(data=True):
+        selecionado = dados.get("selecionado", False)
         net.add_node(
             no,
             label=str(dados.get("label", no))[:40],
             title=dados.get("titulo", ""),
             color=CORES.get(dados.get("tipo"), "#95a5a6"),
             shape="dot",
-            size=25 if dados.get("tipo") == "foco" else 15,
+            size=26 if selecionado else 15,
+            borderWidth=4 if selecionado else 1,
+            borderWidthSelected=4,
+            font={"color": "white", "size": 16 if selecionado else 12},
         )
     for origem, destino, dados in grafo.edges(data=True):
         net.add_edge(origem, destino, value=dados.get("peso", 1), title=dados.get("titulo", ""))
@@ -120,37 +131,51 @@ def main():
     col5.metric("Destinatários sem doc. confiável", f"{stats['destinatarios_doc_aproximado']:,}")
 
     st.divider()
-    st.subheader("Buscar entidade (nome, CNPJ ou CPF)")
-    termo = st.text_input("Termo de busca", placeholder="Ex.: JUSTINO, 41136094000299...")
-
-    if not termo:
-        st.info("Digite um nome ou documento para localizar uma entidade e explorar seus vínculos.")
-        return
-
-    resultados = buscar_entidades(df, termo)
-    if resultados.empty:
-        st.warning("Nenhuma entidade encontrada para esse termo.")
-        return
-
-    resultados = resultados.assign(
-        rotulo=lambda d: d["tipo"] + " — " + d["nome"].fillna("") + " (" + d["id"] + ")"
+    st.subheader("Selecionar entidades para investigar")
+    st.caption(
+        "Escolha um ou mais emitentes, destinatários e/ou produtos (digite para buscar). "
+        "O grafo mostra as notas que envolvem qualquer um dos selecionados."
     )
-    escolha = st.selectbox("Selecione a entidade", resultados["rotulo"])
-    entidade_id = resultados.loc[resultados["rotulo"] == escolha, "id"].iloc[0]
+
+    emitentes = listar_emitentes(df).assign(rotulo=lambda d: d["nome"].fillna("(sem nome)") + " — " + d["id"])
+    destinatarios = listar_destinatarios(df).assign(rotulo=lambda d: d["nome"].fillna("(sem nome)") + " — " + d["id"])
+    produtos = listar_produtos(df).assign(rotulo=lambda d: d["nome"].fillna("(sem nome)") + " — " + d["id"])
+
+    col_e, col_d, col_p = st.columns(3)
+    rotulos_emit = col_e.multiselect("Emitentes", emitentes["rotulo"], placeholder="Buscar emitente...")
+    rotulos_dest = col_d.multiselect("Destinatários", destinatarios["rotulo"], placeholder="Buscar destinatário...")
+    rotulos_prod = col_p.multiselect("Produtos", produtos["rotulo"], placeholder="Buscar produto...")
+
+    emit_ids = emitentes.loc[emitentes["rotulo"].isin(rotulos_emit), "id"].tolist()
+    dest_ids = destinatarios.loc[destinatarios["rotulo"].isin(rotulos_dest), "id"].tolist()
+    produto_ids = produtos.loc[produtos["rotulo"].isin(rotulos_prod), "id"].tolist()
+
+    if not (emit_ids or dest_ids or produto_ids):
+        st.info("Selecione ao menos um emitente, destinatário ou produto para montar o grafo.")
+        return
 
     with st.spinner("Construindo grafo de vínculos..."):
-        grafo = construir_grafo_entidade(df, entidade_id)
+        grafo, total_encontradas, total_exibidas = construir_grafo_selecao(df, emit_ids, dest_ids, produto_ids)
 
-    if grafo.number_of_nodes() <= 1:
-        st.warning("Entidade encontrada, mas sem vínculos de produto/nota associados.")
+    if grafo.number_of_nodes() == 0:
+        st.warning("Nenhum vínculo encontrado para a seleção.")
         return
 
-    st.caption(f"{grafo.number_of_nodes()} nós, {grafo.number_of_edges()} vínculos exibidos (recorte top valor).")
+    if total_exibidas < total_encontradas:
+        st.caption(
+            f"Mostrando as {total_exibidas:,} notas de maior valor entre {total_encontradas:,} "
+            "encontradas, para manter o grafo navegável."
+        )
+    else:
+        st.caption(f"{total_exibidas:,} nota(s) encontradas.")
+    st.caption(f"{grafo.number_of_nodes()} nós, {grafo.number_of_edges()} vínculos exibidos.")
+
     html = renderizar_grafo(grafo)
     components.html(html, height=740, scrolling=True)
 
     st.markdown(
-        "🔴 Entidade pesquisada &nbsp;&nbsp; 🔵 Emitente &nbsp;&nbsp; 🟢 Destinatário &nbsp;&nbsp; 🟠 Produto"
+        "🔵 Emitente &nbsp;&nbsp; 🟢 Destinatário &nbsp;&nbsp; 🟠 Produto "
+        "&nbsp;&nbsp; contorno branco = selecionado por você"
     )
 
 
